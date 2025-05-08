@@ -5,6 +5,13 @@ import logging
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import PromptTemplate
 import validators
+import time
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from dotenv import load_dotenv
+import os
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -154,21 +161,25 @@ post_chain = post_prompt | llm
 
 def generate_insta_post(input_data: str) -> str:
     """
-    Generate a instagram post using the given input data.
+    Generate an Instagram post using the given summarized text.
 
     Parameters
     ----------
     input_data : str
-        The input data to use for generating the response
+        The summarized text to use for generating the response.
 
     Returns
     -------
     str
-        The generated response
+        The generated Instagram post; returns an empty string on failure.
     """
-    logger.info("Generating instagram post...")
-    response = post_chain.invoke({'content': input_data})
-    return response.content
+    logger.info("Generating Instagram post...")
+    try:
+        response = post_chain.invoke({'content': input_data})
+        return response.content
+    except Exception as e:
+        logger.error(f"Error during Instagram post generation: {e}")
+        return ""
 
 
 def write_to_file(text: str) -> bool:
@@ -193,3 +204,27 @@ def write_to_file(text: str) -> bool:
     except Exception as e:
         logger.error(f"Error writing to file article.txt: {e}")
         return False
+
+def send_email(email_body: str):
+    # Email credentials
+    sender_email = os.getenv("SENDER_EMAIL")
+    app_password = os.getenv("APP_PASSWORD")
+    receiver_email = os.getenv("RECEIVER_EMAIL")
+
+    # Create message
+    message = MIMEMultipart()
+    message["From"] = sender_email
+    message["To"] = receiver_email
+    message["Subject"] = "Email from Agentic Pundachi"
+
+    # Attach body to email
+    message.attach(MIMEText(email_body, "plain"))
+
+    # Send the email
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(sender_email, app_password)
+            server.sendmail(sender_email, receiver_email, message.as_string())
+        logger.info("Email sent successfully!")
+    except Exception as e:
+        logger.error("Error:", e)
