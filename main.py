@@ -85,3 +85,37 @@ if __name__ == "__main__":
 
 
         
+
+
+
+
+
+
+
+
+
+
+# Converting the agent to a fully autonomous agent
+# For that first a proper goal is need to be defined
+# Goal: Generate an Instagram post of the latest trending article
+#   It should be send as an email
+
+# Things that make up an autonomous agent
+# 1. Goal
+# 2. Planning
+# 3. Action
+# 4. Feedback
+
+# 1.GOAL
+# Find the article, get the content, summarize it and generate an instagram post and send it as an email
+# -Final goal is send email
+
+# 2. PLANNING
+# Available tools are:
+# -web_search
+# -extract_article
+# -summarize_text
+# -write_to_file
+# -generate_insta_post
+# -send_email
+

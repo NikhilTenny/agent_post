@@ -13,6 +13,8 @@ from dotenv import load_dotenv
 import os
 load_dotenv()
 
+# from termcolor import colored, cprint
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -32,6 +34,7 @@ def web_search(query: str) -> list[str]:
         A list of search results
     """
     logger.info("Searching for articles...")
+    print('Searching web for articles......................................................')
     try:
         wrapper = DuckDuckGoSearchAPIWrapper(region="de-de", time="d", max_results=3)
         search = DuckDuckGoSearchResults(output_format='list', wrapper=wrapper)
