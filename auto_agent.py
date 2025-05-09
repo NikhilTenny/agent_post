@@ -5,11 +5,10 @@ from pydantic import BaseModel, Field
 from typing import List, Union, TypedDict, Annotated, Tuple
 import operator
 from langgraph.graph import END
-from langchain.agents import create_react_agent
+from langgraph.prebuilt import create_react_agent
 from tools import web_search, extract_article, summarize_text, write_to_file, generate_insta_post, send_email
 from langchain_core.tools import Tool
 from models import Response, Act, Plan, PlanExecute
-
 
 
 
@@ -30,79 +29,45 @@ tools = [
             func=summarize_text,
             description="Useful for when you need to summarize a long text."
         ),
-        Tool(
-            name="write_to_file",
-            func=write_to_file,
-            description="Useful for when you need to write text to a file."
-        ),
-        Tool(
-            name="generate_insta_post",
-            func=generate_insta_post,
-            description="Useful for when you need to generate a instagram post using a chain and input data."
-        ),
-        Tool(
-            name="send_email",
-            func=send_email,
-            description="Useful for when you need to send an email."
-        )
+        # Tool(
+        #     name="write_to_file",
+        #     func=write_to_file,
+        #     description="Useful for when you need to write text to a file."
+        # ),
+        # Tool(
+        #     name="generate_insta_post",
+        #     func=generate_insta_post,
+        #     description="Useful for when you need to generate a instagram post using a chain and input data."
+        # ),
+        # Tool(
+        #     name="send_email",
+        #     func=send_email,
+        #     description="Useful for when you need to send an email."
+        # )
     ]
 
-custom_template = """You are a helpful assistant.
-
-    You have access to the following tools:
-    {tools}
-
-    You can use these tools: {tool_names}
-
-    You must always respond in one of the following formats:
-
-    To use a tool:
-    Thought: your reasoning here
-    Action: name of the tool
-    Action Input: input to the tool
-
-    To return a final answer:
-    Thought: your reasoning here
-    Final Answer: the final answer to the user's question
-
-    !Do not respond with any other text other than the above formats!
-
-    !The format should be strictly followed!
-
-    Here is the user input: 
-    {input}
-
-    Begin!
-
-    Use the scratchpad below to plan your actions step by step:
-    {agent_scratchpad}
-"""
-llm = ChatOpenAI(model="gpt-4-turbo", temperature=0)
-prompt = PromptTemplate(template=custom_template, input_variables=["input", "tools", "tool_names", "agent_scratchpad"])
-
+llm = ChatOpenAI(model="gpt-4o")
+prompt = "You are a helpful assistant."
 agent_executor = create_react_agent(llm, tools, prompt=prompt)
-
+# result = agent_executor.invoke(
+#     {
+#         "messages": [
+#             ("user", "What is the capital of France?")
+#         ]
+#     },
+# )
+# print(result)
 planner_prompt = ChatPromptTemplate.from_messages(
     [
         (
             "system",
-            """
-            For the given objective, come up with a simple step by step plan. \
+            """For the given objective, come up with a simple step by step plan. \
             This plan should involve individual tasks, that if executed correctly will yield the correct answer. Do not add any superfluous steps. \
-            The result of the final step should be the final answer. Make sure that each step has all the information needed - do not skip steps.
-            The steps should be given in the format:
-            Action 1: <action>
-            Action 2: <action>
-            ...
-            """,
+            The result of the final step should be the final answer. Make sure that each step has all the information needed - do not skip steps.""",
         ),
-        (
-            "placeholder", 
-            "{messages}"
-        ),
+        ("placeholder", "{messages}"),
     ]
 )
-
 
 
 
@@ -125,6 +90,14 @@ replanner_prompt = ChatPromptTemplate.from_template(
 # config = RunnableConfig(metadata=True)
 
 planner = planner_prompt | llm.with_structured_output(Plan)
+
+# print(planner.invoke(
+#     {
+#         "messages": [
+#             ("user", "what is the hometown of the current Australia open winner?")
+#         ]
+#     }
+# ))
 replanner = replanner_prompt | llm.with_structured_output(Act)
 
 
@@ -137,110 +110,91 @@ def plan_step(state: PlanExecute):
             ]
         })
     state.plan = plan.steps
-    #print("\nSteps: ", plan.steps)
     return state
 
 
 
-def execute_step(state: PlanExecute):
-    global total_tokens
-    print('\n Executing step...')
-    plan = state.plan
-    
+async def execute_step(state: PlanExecute):
+    plan = state["plan"]
     plan_str = "\n".join(f"{i+1}. {step}" for i, step in enumerate(plan))
     task = plan[0]
     task_formatted = f"""For the following plan:
-    {plan_str}\n\nYou are tasked with executing step {1}, {task}."""
+{plan_str}\n\nYou are tasked with executing step {1}, {task}."""
+    agent_response = await agent_executor.ainvoke(
+        {"messages": [("user", task_formatted)]}
+    )
+    return {
+        "past_steps": [(task, agent_response["messages"][-1].content)],
+    }
 
-    # formatted_prompt = prompt.format(
-    # input=task_formatted,
-    # tools="\n".join([f"{t.name}: {t.description}" for t in tools]),
-    # tool_names=", ".join([t.name for t in tools]),
-    # agent_scratchpad=""
-    # )
 
-    agent_response = agent_executor.invoke({
-        "input": task_formatted,
-        "intermediate_steps": []  # required by ReAct agent
-    })
-    print('\n Agent result start: \n', agent_response, '\nAgent Execution end: \n')
-    #print('appended: ', agent_response.messages[-1].content)
-    state.past_steps.append((task, agent_response.messages[-1].content))
-    return state
+async def plan_step(state: PlanExecute):
+    plan = await planner.ainvoke({"messages": [("user", state["input"])]})
+    return {"plan": plan.steps}
 
-def replan_step(state: PlanExecute):
-    global total_tokens
-    print('\n Replanning...')
-    act = replanner.invoke({
-        "input": state.input,
-        "plan": state.plan,
-        "past_steps": state.past_steps
-    })
-    if isinstance(act.action, Response):
-        state.response = act.action.response
-        return state
+
+async def replan_step(state: PlanExecute):
+    output = await replanner.ainvoke(state)
+    if isinstance(output.action, Response):
+        return {"response": output.action.response}
     else:
-        state.plan = act.action.steps
-        return state
+        return {"plan": output.action.steps}
+
 
 def should_end(state: PlanExecute):
-    if "response" in state and state.response:
-        print('\n Response: ', state.response)
+    if "response" in state and state["response"]:
         return END
     else:
-        print('\n Agent: ', state.past_steps[-1][1])
         return "agent"
 
 
-# user_input = "Create an instagram post for the latest news in Automobile industry"
-# state = PlanExecute(input=user_input)
-# state = plan_step(state)
-# while True:
-#     state = execute_step(state)
-#     if should_end(state) == END:
-#         break
-        
-#     state = replan_step(state)
 
 
-# from langgraph.graph import StateGraph, START
+from langgraph.graph import StateGraph, START
+import asyncio
+workflow = StateGraph(PlanExecute)
 
-# workflow = StateGraph(PlanExecute)
+# Add the plan node
+workflow.add_node("planner", plan_step)
 
-# # Add the plan node
-# workflow.add_node("planner", plan_step)
+# Add the execution step
+workflow.add_node("agent", execute_step)
 
-# # Add the execution step
-# workflow.add_node("agent", execute_step)
+# Add a replan node
+workflow.add_node("replan", replan_step)
 
-# # Add a replan node
-# workflow.add_node("replan", replan_step)
+workflow.add_edge(START, "planner")
 
-# workflow.add_edge(START, "planner")
+# From plan we go to agent
+workflow.add_edge("planner", "agent")
 
-# # From plan we go to agent
-# workflow.add_edge("planner", "agent")
+# From agent, we replan
+workflow.add_edge("agent", "replan")
 
-# # From agent, we replan
-# workflow.add_edge("agent", "replan")
+workflow.add_conditional_edges(
+    "replan",
+    # Next, we pass in the function that will determine which node is called next.
+    should_end,
+    ["agent", END],
+)
 
-# workflow.add_conditional_edges(
-#     "replan",
-#     # Next, we pass in the function that will determine which node is called next.
-#     should_end,
-#     ["agent", END],
-# )
+# Finally, we compile it!
+# This compiles it into a LangChain Runnable,
+# meaning you can use it as you would any other runnable
+app = workflow.compile()
+# Finally, we compile it!
+# This compiles it into a LangChain Runnable,
+# meaning you can use it as you would any other runnable
+app = workflow.compile()
+config = {"recursion_limit": 50}
+inputs = {"input": "who is the newly elected pope?"}
 
-# # Finally, we compile it!
-# # This compiles it into a LangChain Runnable,
-# # meaning you can use it as you would any other runnable
-# app = workflow.compile()
+async def main():
+    async for event in app.astream(inputs, config=config):
+        for k, v in event.items():
+            if k != "__end__":
+                print(v)
 
-# config = {"recursion_limit": 50}
-# inputs = {"input": "what is the hometown of the mens 2024 Australia open winner?"}
-# for event in app.astream(inputs, config=config):
-#     for k, v in event.items():
-#         if k != "__end__":
-#             #print(v)
+asyncio.run(main())
 
 

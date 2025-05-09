@@ -7,7 +7,7 @@ class Plan(BaseModel):
     steps: List[str] = Field(description="different steps to follow, should be in sorted order")
 
 
-class PlanExecute(BaseModel):
+class PlanExecute(TypedDict):
     input: str | None = None
     plan: List[str] = []
     past_steps: Annotated[List[Tuple], operator.add] = []
